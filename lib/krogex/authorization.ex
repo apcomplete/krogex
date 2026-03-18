@@ -165,7 +165,7 @@ defmodule Krogex.Authorization do
   """
   @spec revoke_local_token(Krogex.t(), String.t()) :: :ok | {:error, term()}
   def revoke_local_token(%Krogex{} = client, token_name \\ @default_user_token) do
-    Krogex.TokenStore.delete_token(token_name, dir: client.token_store_dir)
+    client.token_store.delete(token_name, client.token_store_opts)
   end
 
   defp client_token_name(scope) do

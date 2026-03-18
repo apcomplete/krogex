@@ -32,7 +32,7 @@ defmodule Krogex.Client do
     case Req.post(token_url(client), req_opts) do
       {:ok, %{status: status, body: token_info}} when status in 200..299 and is_map(token_info) ->
         Logger.debug("[Krogex] Token fetch successful (#{grant_type})")
-        token_info = TokenStore.normalize_token(token_info)
+        token_info = TokenStore.normalize(token_info)
         persisted_name = token_name || client.token_name
 
         with :ok <- maybe_save_token(persisted_name, token_info, client) do
@@ -113,8 +113,7 @@ defmodule Krogex.Client do
   defp refresh_saved_token(%Krogex{} = client) do
     Logger.debug("[Krogex] Attempting to refresh token: #{client.token_name}")
 
-    with {:ok, token_info} <-
-           TokenStore.load_token(client.token_name, dir: client.token_store_dir),
+    with {:ok, token_info} <- client.token_store.load(client.token_name, client.token_store_opts),
          refresh_token when is_binary(refresh_token) <- token_info["refresh_token"] do
       fetch_token(
         %{client | token_info: token_info},
@@ -131,24 +130,31 @@ defmodule Krogex.Client do
     end
   end
 
-  defp current_token(%Krogex{
-         token_info: token_info,
-         token_name: token_name,
-         token_store_dir: dir
-       }) do
+  defp current_token(%Krogex{token_info: token_info, token_name: nil}) do
+    token_info
+  end
+
+  defp current_token(%Krogex{} = client) do
     persisted_token =
-      if is_binary(token_name) do
-        case TokenStore.load_token(token_name, dir: dir) do
+      if is_binary(client.token_name) do
+        case client.token_store.load(client.token_name, client.token_store_opts) do
           {:ok, saved} -> saved
           _ -> nil
         end
       end
 
     cond do
-      is_map(persisted_token) and not TokenStore.expired?(persisted_token) -> persisted_token
-      is_map(token_info) and not TokenStore.expired?(token_info) -> token_info
-      is_map(persisted_token) -> persisted_token
-      true -> token_info
+      is_map(persisted_token) and not TokenStore.expired?(persisted_token) ->
+        persisted_token
+
+      is_map(client.token_info) and not TokenStore.expired?(client.token_info) ->
+        client.token_info
+
+      is_map(persisted_token) ->
+        persisted_token
+
+      true ->
+        client.token_info
     end
   end
 
@@ -169,6 +175,6 @@ defmodule Krogex.Client do
   defp maybe_save_token(nil, _token_info, _client), do: :ok
 
   defp maybe_save_token(token_name, token_info, %Krogex{} = client) do
-    TokenStore.save_token(token_name, token_info, dir: client.token_store_dir)
+    client.token_store.save(token_name, token_info, client.token_store_opts)
   end
 end

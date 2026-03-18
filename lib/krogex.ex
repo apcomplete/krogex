@@ -63,7 +63,7 @@ defmodule Krogex do
 
   ## Token Persistence
 
-  Tokens can be automatically persisted to disk by providing a `token_name`:
+  Tokens can be automatically persisted by providing a `token_name`:
 
       {:ok, client} = Krogex.Authorization.client_credentials(
         client,
@@ -73,11 +73,21 @@ defmodule Krogex do
 
       # Later, load the saved token
       {:ok, client} = Krogex.load_token(client, "my_app_public")
+
+  By default, tokens are stored as files on disk using `Krogex.TokenStore.File`.
+  You can provide a custom token store by implementing the `Krogex.TokenStore`
+  behaviour:
+
+      config :krogex,
+        token_store: MyApp.KrogerTokenStore
+
+  Or disable persistence entirely by setting `token_store: nil`.
   """
 
   alias __MODULE__.TokenStore
 
   @type token_info :: map()
+  @type token_store :: module() | nil
 
   @type t :: %__MODULE__{
           client_id: String.t(),
@@ -86,7 +96,8 @@ defmodule Krogex do
           base_url: String.t(),
           token_name: String.t() | nil,
           token_info: token_info() | nil,
-          token_store_dir: String.t() | nil,
+          token_store: token_store(),
+          token_store_opts: keyword(),
           req_options: keyword()
         }
 
@@ -96,7 +107,8 @@ defmodule Krogex do
     :redirect_uri,
     token_name: nil,
     token_info: nil,
-    token_store_dir: nil,
+    token_store: TokenStore.File,
+    token_store_opts: [],
     base_url: "https://api.kroger.com",
     req_options: []
   ]
@@ -112,7 +124,8 @@ defmodule Krogex do
   - `:client_secret` (required)
   - `:redirect_uri` (optional, required for user auth flows)
   - `:base_url` (optional, defaults to "https://api.kroger.com")
-  - `:token_store_dir` (optional, custom directory for token persistence)
+  - `:token_store` (optional, module implementing `Krogex.TokenStore`, defaults to `Krogex.TokenStore.File`)
+  - `:token_store_opts` (optional, options passed to token store, e.g. `[dir: "/path"]`)
   - `:req_options` (optional, extra options passed to Req)
 
   ## Examples
@@ -133,7 +146,8 @@ defmodule Krogex do
       client_secret: Application.get_env(:krogex, :client_secret),
       redirect_uri: Application.get_env(:krogex, :redirect_uri),
       base_url: Application.get_env(:krogex, :base_url),
-      token_store_dir: Application.get_env(:krogex, :token_store_dir),
+      token_store: Application.get_env(:krogex, :token_store, TokenStore.File),
+      token_store_opts: Application.get_env(:krogex, :token_store_opts, []),
       req_options: Application.get_env(:krogex, :req_options, [])
     ]
 
@@ -151,7 +165,8 @@ defmodule Krogex do
   - `:base_url` (optional) - API base URL, defaults to "https://api.kroger.com"
   - `:token_name` (optional) - Name for token persistence
   - `:token_info` (optional) - Pre-loaded token info map
-  - `:token_store_dir` (optional) - Directory for token file storage
+  - `:token_store` (optional) - Module implementing `Krogex.TokenStore` behaviour
+  - `:token_store_opts` (optional) - Options passed to token store callbacks
   - `:req_options` (optional) - Extra options passed to Req HTTP client
   """
   @spec new(keyword()) :: t()
@@ -163,7 +178,8 @@ defmodule Krogex do
       base_url: Keyword.get(opts, :base_url) || "https://api.kroger.com",
       token_name: Keyword.get(opts, :token_name),
       token_info: Keyword.get(opts, :token_info),
-      token_store_dir: Keyword.get(opts, :token_store_dir),
+      token_store: Keyword.get(opts, :token_store, TokenStore.File),
+      token_store_opts: Keyword.get(opts, :token_store_opts, []),
       req_options: Keyword.get(opts, :req_options, [])
     }
   end
@@ -182,10 +198,12 @@ defmodule Krogex do
 
   @doc """
   Loads a persisted token into the client.
+
+  Uses the configured `token_store` module to load the token.
   """
   @spec load_token(t(), String.t()) :: {:ok, t()} | {:error, :token_not_found | term()}
   def load_token(%__MODULE__{} = client, token_name) do
-    case TokenStore.load_token(token_name, dir: client.token_store_dir) do
+    case client.token_store.load(token_name, client.token_store_opts) do
       {:ok, token_info} ->
         {:ok, put_token(%{client | token_name: token_name}, token_info, token_name)}
 
