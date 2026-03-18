@@ -46,7 +46,11 @@ defmodule Krogex.Authorization do
   end
 
   @doc """
-  Fetches or refreshes a client-credentials token and persists it by scope.
+  Fetches or refreshes a client-credentials token.
+
+  Client credentials tokens are stored in-memory (ETS) since they are
+  short-lived app-level tokens that don't need persistence. This avoids
+  requiring the app's token store to handle non-user tokens.
 
   ## Options
 
@@ -57,25 +61,28 @@ defmodule Krogex.Authorization do
   def client_credentials(%Krogex{} = client, scope, opts \\ []) do
     token_name = Keyword.get(opts, :token_name, client_token_name(scope))
 
-    case Krogex.load_token(client, token_name) do
+    # Use in-memory store for client credentials (not the app's token store)
+    memory_client = %{client | token_store: Krogex.TokenStore.Memory, token_store_opts: []}
+
+    case Krogex.load_token(memory_client, token_name) do
       {:ok, loaded_client} ->
         if Krogex.TokenStore.expired?(loaded_client.token_info) do
-          Client.fetch_token(
-            client,
-            %{"grant_type" => "client_credentials", "scope" => scope},
-            token_name
-          )
+          fetch_client_credentials(memory_client, scope, token_name)
         else
           {:ok, loaded_client}
         end
 
       _ ->
-        Client.fetch_token(
-          client,
-          %{"grant_type" => "client_credentials", "scope" => scope},
-          token_name
-        )
+        fetch_client_credentials(memory_client, scope, token_name)
     end
+  end
+
+  defp fetch_client_credentials(client, scope, token_name) do
+    Client.fetch_token(
+      client,
+      %{"grant_type" => "client_credentials", "scope" => scope},
+      token_name
+    )
   end
 
   @doc """
